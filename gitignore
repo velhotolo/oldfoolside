@@ -1,0 +1,8 @@
+project/
+
+*.love
+
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
