@@ -241,6 +241,8 @@ function love.wheelmoved(x, y)
     getActiveTab():scroll(-y * 3)
 end
 
+if tabbar.wheelmoved(dx, dy, font, tabs) then return end
+
 -- Handles mouse clicks on the tab bar and editor panes (focus, cursor, selection start)
 function love.mousepressed(mx, my, button)
     if help.visible or pendingCloseIdx then return end
@@ -650,3 +652,4 @@ function love.draw()
     help.draw(codeFont)
     Terminal.draw()
 end
+

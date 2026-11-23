@@ -7,6 +7,7 @@ function love.conf(t)
     t.window.resizable = true
     t.window.minwidth = 500
     t.window.minheight = 300
+    t.window.icon = "icon.png"
     t.modules.physics = false
     t.modules.joystick = false
 end
