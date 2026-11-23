@@ -22,7 +22,10 @@ I'm currently coding all my projects in it, and so far, so good. I just need to 
 - **Full Text Editing Essentials:** UTF-8 safe cursor/deletion, auto-indentation, mouse & keyboard selection, clipboard support (`Ctrl+C/X/V`), line duplication (`Ctrl+D`), and a 124-step Undo/Redo history per tab.
 - **Built-in Shortcuts Overlay (`F1`):** Clean two-column cheat sheet accessible anytime without leaving the editor.
 - **Terminal Instance (`F3`):** Mini terminal to touch file.lua and all the good stuff. 
-- **Drag'n'Drop works on all OS:** Linux users have one more option which is Crtl + O (see below):
+- **Drag'n'Drop works on all OS:** Linux users have one more option which is Crtl + O (see below)
+- **You can roll on the Tab Bar:** Allowing you to have tons os tabs open :D
+  
+  
 
 ## Requirements & Running
 
@@ -41,7 +44,7 @@ love . path/to/file.lua
 
 Roadmap
     
-    [ ] Better Identation
+    [X] Better Identation
     
     [X] Autosave
     
