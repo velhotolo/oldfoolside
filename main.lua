@@ -10,7 +10,6 @@ local search            = require("search")
 local utf8              = require("utf8")
 local Terminal          = require("terminal")
 
-local projectDir        = "project"
 local tabs              = {}
 local activeTabIdx      = 1
 local splitScreen       = false
@@ -21,6 +20,7 @@ local isSelecting       = false
 local pendingCloseIdx   = nil
 local autosaveTimer     = 0
 local AUTOSAVE_INTERVAL = 30 -- Auto-save interval in seconds
+local swallowText       = false
 
 -- Returns the currently focused tab (respecting split-screen mode)
 local function getActiveTab()
@@ -35,7 +35,7 @@ local function autosaveAll()
     local saved = 0
     for _, tab in ipairs(tabs) do
         if tab:isModified() then
-            local ok = tab:save(projectDir)
+            local ok = tab:save()
             if ok then
                 saved = saved + 1
             end
@@ -115,6 +115,10 @@ local function openFile(filepath)
 
     local content = file:read("*a")
     file:close()
+    if not utf8.len(content) then
+        abyss.set("Not a UTF-8 file: " .. filepath, true)
+        return
+    end
 
     local name = filepath:match("([^/\\]+)$") or filepath
     local newTab = tab_class:new(name, splitLines(content), filepath)
@@ -151,9 +155,10 @@ local function closeTab(idxToClose, force)
 
     local closedName = targetTab.name
     table.remove(tabs, idxToClose)
-
-    activeTabIdx = math.min(activeTabIdx, #tabs)
-    rightTabIdx  = math.min(rightTabIdx, #tabs)
+    if idxToClose < activeTabIdx then activeTabIdx = activeTabIdx - 1 end
+    if idxToClose < rightTabIdx then rightTabIdx = rightTabIdx - 1 end
+    activeTabIdx = math.max(1, math.min(activeTabIdx, #tabs))
+    rightTabIdx  = math.max(1, math.min(rightTabIdx, #tabs))
 
     if #tabs < 2 then
         splitScreen = false
@@ -191,26 +196,32 @@ end
 
 -- Initializes the IDE window, font, default tabs, and command-line file arguments
 function love.load(args)
-    os.execute("mkdir -p " .. projectDir)
-    love.window.setMode(1280, 720, { resizable = true })
     love.window.setTitle("Old Fool's IDE")
 
     love.keyboard.setKeyRepeat(true)
     codeFont = love.graphics.newFont(18)
     love.graphics.setFont(codeFont)
 
-    tabs = {
-        tab_class:new("main.lua", {
-            "function love.draw()",
-            "    love.graphics.print('Welcome!', 100, 100)",
-            "end"
-        }),
-        tab_class:new("module_2.lua", {
-            "-- Second tab",
-            "local x = 10",
-            "return x"
-        })
-    }
+    -- Attempt to open main.lua if it exists on disk, otherwise initialize default buffers
+    local mainPath = "main.lua"
+    local f = io.open(mainPath, "r")
+    if f then
+        f:close()
+        openFile(mainPath)
+    else
+        tabs = {
+            tab_class:new("main.lua", {
+                "function love.draw()",
+                "    love.graphics.print('Welcome!', 100, 100)",
+                "end"
+            }),
+            tab_class:new("module_2.lua", {
+                "-- Second tab",
+                "local x = 10",
+                "return x"
+            })
+        }
+    end
 
     if args and #args > 0 then
         for i = 1, #args do
@@ -219,8 +230,11 @@ function love.load(args)
     end
 end
 
--- Updates the periodic auto-save timer
+-- Updates the periodic auto-save timer and external overlay states
 function love.update(dt)
+    swallowText = false
+    if help.visible or pendingCloseIdx then return end
+
     autosaveTimer = autosaveTimer + dt
     if autosaveTimer >= AUTOSAVE_INTERVAL then
         autosaveTimer = 0
@@ -235,13 +249,17 @@ function love.focus(focused)
     end
 end
 
--- Handles vertical mouse wheel scrolling in the active tab
+-- Handles mouse wheel scrolling for the tab bar and active editor pane
 function love.wheelmoved(x, y)
-    if help.visible or pendingCloseIdx then return end
-    getActiveTab():scroll(-y * 3)
-end
+    if tabbar and tabbar.wheelmoved and tabbar.wheelmoved(x, y, codeFont, tabs) then
+        return
+    end
 
-if tabbar.wheelmoved(dx, dy, font, tabs) then return end
+    local tab = getActiveTab()
+    if tab then
+        tab:scroll(-y * 3)
+    end
+end
 
 -- Handles mouse clicks on the tab bar and editor panes (focus, cursor, selection start)
 function love.mousepressed(mx, my, button)
@@ -311,15 +329,24 @@ end
 
 -- Routes typed text to the terminal, rename bar, search box, or active editor tab
 function love.textinput(t)
-    if Terminal.textinput(t) then return end
-    if help.visible or pendingCloseIdx then return end
+    if swallowText then
+        swallowText = false
+        return
+    end
+
+    if Terminal.textinput and Terminal.textinput(t) then
+        return
+    end
+
     local tab = getActiveTab()
+    if not tab then return end
 
     if tab.renaming then
         tab:renameInput(t)
         abyss.set("Rename tab: " .. tab.renameBuffer .. "|")
         return
     end
+
     if search.visible then
         search.textinput(t, tab)
         return
@@ -331,19 +358,26 @@ end
 
 -- Handles keyboard shortcuts, navigation, indentation, and overlay controls
 function love.keypressed(key)
-    if Terminal.keypressed(key) then return end
+    if Terminal.keypressed and Terminal.keypressed(key) then return end
 
+    -- Confirmation dialog for closing tabs with unsaved changes
     if pendingCloseIdx then
         local idx = pendingCloseIdx
+        local targetTab = tabs[idx]
+
         if key == "y" then
-            local ok, path = tabs[idx]:save(projectDir)
+            swallowText = true
             pendingCloseIdx = nil
-            if ok then
-                closeTab(idx, true)
-            else
-                abyss.set("Failed to save: " .. path, true)
+            if targetTab then
+                local ok, path = targetTab:save()
+                if ok then
+                    closeTab(idx, true)
+                else
+                    abyss.set("Failed to save: " .. tostring(path), true)
+                end
             end
         elseif key == "n" then
+            swallowText = true
             pendingCloseIdx = nil
             closeTab(idx, true)
         elseif key == "escape" then
@@ -354,13 +388,15 @@ function love.keypressed(key)
     end
 
     local tab = getActiveTab()
+    if not tab then return end
 
+    -- Tab rename mode handlers
     if tab.renaming then
         if key == "return" or key == "kpenter" then
-            if tab:confirmRename(projectDir) then
-                abyss.set("Renamed to: " .. tab.name)
+            if tab:confirmRename() then
+                abyss.set("Renamed tab to: " .. tab.name)
             else
-                abyss.set("Rename cancelled")
+                abyss.set("Rename cancelled or invalid")
             end
         elseif key == "escape" then
             tab:cancelRename()
@@ -372,18 +408,11 @@ function love.keypressed(key)
         return
     end
 
+    -- Global overlays and shortcuts
     if key == "f1" then
         help.toggle()
         return
-    end
-
-    if key == "f5" then
-        local ok, msg = runner.run(tabs, projectDir)
-        abyss.set(msg, not ok)
-        return
-    end
-
-    if key == "f2" then
+    elseif key == "f2" then
         if #tabs < 2 then
             abyss.set("Open at least 2 tabs (Ctrl+T) for split-screen", true)
             return
@@ -431,7 +460,7 @@ function love.keypressed(key)
         elseif key == "up" then
             autocomplete.move(-1)
             return
-        elseif key == "tab" then
+        elseif key == "tab" or key == "return" or key == "kpenter" then
             autocomplete.accept(tab)
             return
         elseif key == "escape" then
@@ -448,7 +477,35 @@ function love.keypressed(key)
         return
     end
 
+    -- Tab key: snippet macro expansion or indentation
     if key == "tab" then
+        if not shift and not tab:hasSelection() then
+            local line   = tab.lines[tab.cy]
+            local before = string.sub(line, 1, tab.cx - 1)
+            local word   = string.match(before, "([%w_]+)$")
+            local macro  = word and dictionary.macros and dictionary.macros[word]
+            if macro then
+                local indent = string.match(line, "^%s*") or ""
+                -- Remove the trigger word from the current line
+                tab.lines[tab.cy] = string.sub(before, 1, #before - #word) .. string.sub(line, tab.cx)
+                tab.cx = tab.cx - #word
+
+                -- Build the snippet template applying line indentation
+                local body = {}
+                for i, l in ipairs(macro) do
+                    body[i] = (i == 1) and l or (indent .. l)
+                end
+                local startY = tab.cy
+                tab:paste(table.concat(body, "\n"))
+
+                -- Place cursor inside the macro block
+                tab.cy = startY + 1
+                tab.cx = #tab.lines[tab.cy] + 1
+                autocomplete.close()
+                return
+            end
+        end
+
         if shift then
             tab:unindent()
         else
@@ -458,8 +515,16 @@ function love.keypressed(key)
         return
     end
 
+    -- Control key combinations
     if ctrl then
-        if key == "o" then
+        if key == "s" then
+            local ok, path = tab:save()
+            if ok then
+                abyss.set("Saved: " .. tab.name)
+            else
+                abyss.set("Failed to save: " .. tostring(path), true)
+            end
+        elseif key == "o" then
             local handle = io.popen('zenity --file-selection --title="Open file" 2>/dev/null')
             if handle then
                 local filepath = handle:read("*l")
@@ -476,11 +541,18 @@ function love.keypressed(key)
         elseif key == "y" then
             tab:redo()
             abyss.set("Redo")
-        elseif key == "s" then
-            local ok, path = tab:save(projectDir)
-            abyss.set(ok and ("Saved: " .. path) or ("Failed to save: " .. path), not ok)
         elseif key == "t" then
-            local newName = "module_" .. (#tabs + 1) .. ".lua"
+            local n = #tabs + 1
+            local function taken(name)
+                for _, t in ipairs(tabs) do
+                    if t.name == name then return true end
+                end
+                return false
+            end
+            while taken("module_" .. n .. ".lua") do
+                n = n + 1
+            end
+            local newName = "module_" .. n .. ".lua"
             table.insert(tabs, tab_class:new(newName))
             activeTabIdx = #tabs
             abyss.set("Created tab: " .. newName)
@@ -527,6 +599,7 @@ function love.keypressed(key)
         return
     end
 
+    -- Single key navigation and editing
     if key == "backspace" then
         tab:backspace()
         autocomplete.update(tab, dictionary)
@@ -598,6 +671,10 @@ local function drawPane(tab, offsetX, paneW, isFocused)
         local y = topY + (i - 1 - tab.scrollY) * lineH
 
         if y + lineH >= tabbar.height and y <= h - 34 then
+            if tab.errorLine == i then
+                love.graphics.setColor(0.55, 0.12, 0.12, 0.35)
+                love.graphics.rectangle("fill", offsetX, y, paneW, lineH)
+            end
             if selStart and i >= selStart.y and i <= selEnd.y then
                 local c1 = (i == selStart.y) and selStart.x or 1
                 local c2 = (i == selEnd.y) and selEnd.x or (#line + 1)
@@ -645,8 +722,10 @@ function love.draw()
     end
 
     local currentIdx = (splitScreen and activePane == 2) and rightTabIdx or activeTabIdx
+    local acX = (splitScreen and activePane == 2) and math.floor(w / 2) or 0
+
     search.draw(codeFont)
-    autocomplete.draw(codeFont, activeTab)
+    autocomplete.draw(codeFont, activeTab, acX)
     tabbar.draw(codeFont, tabs, currentIdx)
     abyss.draw(codeFont, activeTab)
     help.draw(codeFont)

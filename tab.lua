@@ -21,6 +21,16 @@ local function stripInlineComment(line)
     return line:gsub("%-%-.*$", "")
 end
 
+-- Checks if a file exists on disk
+local function fileExists(path)
+    local f = io.open(path, "r")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
 -- Creates and initializes a new editor tab instance
 function tab:new(name, lines, filepath)
     local initialLines = lines and cloneLines(lines) or { "" }
@@ -29,20 +39,20 @@ function tab:new(name, lines, filepath)
     end
 
     local instance = setmetatable({
-        name = name or "untitled.lua",
-        filepath = filepath,
-        lines = initialLines,
-        cx = 1,
-        cy = 1,
-        selStart = nil,
-        selEnd = nil,
-        errorLine = nil,
-        errorMsg = nil,
-        history = {},
-        histIdx = 0,
-        savedIdx = 0,
-        scrollY = 0,
-        renaming = false,
+        name         = name or "untitled.lua",
+        filepath     = filepath,
+        lines        = initialLines,
+        cx           = 1,
+        cy           = 1,
+        selStart     = nil,
+        selEnd       = nil,
+        errorLine    = nil,
+        errorMsg     = nil,
+        history      = {},
+        histIdx      = 0,
+        savedIdx     = 0,
+        scrollY      = 0,
+        renaming     = false,
         renameBuffer = "",
     }, self)
 
@@ -93,6 +103,9 @@ function tab:confirmRename(projectDir)
     if self.filepath then
         local dir = self.filepath:match("^(.*[/\\])") or ""
         local newPath = dir .. newName
+        if fileExists(newPath) then
+            return false
+        end
         if os.rename(self.filepath, newPath) then
             self.filepath = newPath
         end
@@ -102,6 +115,9 @@ function tab:confirmRename(projectDir)
         local f = io.open(oldPath, "r")
         if f then
             f:close()
+            if fileExists(newPath) then
+                return false
+            end
             if os.rename(oldPath, newPath) then
                 self.filepath = newPath
             end
@@ -149,19 +165,26 @@ end
 
 -- Pushes the current buffer and cursor state onto the undo/redo history stack
 function tab:saveHistory()
+    -- Invalidate saved status if new changes overwrite the redo branch
+    if self.savedIdx > self.histIdx then
+        self.savedIdx = -1
+    end
+
     for i = #self.history, self.histIdx + 1, -1 do
         table.remove(self.history, i)
     end
+
     table.insert(self.history, {
         lines = cloneLines(self.lines),
-        cx = self.cx,
-        cy = self.cy
+        cx    = self.cx,
+        cy    = self.cy
     })
-    if #self.history > 100 then
+
+    if #self.history > 64 then
         table.remove(self.history, 1)
-    else
-        self.histIdx = #self.history
+        self.savedIdx = self.savedIdx - 1
     end
+    self.histIdx = #self.history
 end
 
 -- Restores the previous state from the history stack
@@ -200,13 +223,13 @@ end
 -- Inserts text at the cursor and auto-dedents block-closing keywords (end, else, until, })
 function tab:insertText(text)
     self:deleteSelection()
-    local before = string.sub(self.lines[self.cy], 1, self.cx - 1)
-    local after  = string.sub(self.lines[self.cy], self.cx)
-    local newLine = before .. text .. after
-    self.lines[self.cy] = newLine
-    self.cx = self.cx + #text
+    local before                 = string.sub(self.lines[self.cy], 1, self.cx - 1)
+    local after                  = string.sub(self.lines[self.cy], self.cx)
+    local newLine                = before .. text .. after
+    self.lines[self.cy]          = newLine
+    self.cx                      = self.cx + #text
 
-    -- Auto-dedent when a closing keyword is completed at the start of an indented line
+    -- Auto-dedent when a closing keyword is typed on an indented line
     local leadingSpaces, keyword = newLine:match("^( +)(%S+)$")
     if leadingSpaces and #leadingSpaces >= INDENT_SIZE then
         if keyword == "end" or keyword == "else" or keyword == "until" or keyword == "}" then
@@ -226,13 +249,14 @@ function tab:backspace()
         self:saveHistory()
         return
     end
+
     if self.cx > 1 then
-        local line   = self.lines[self.cy]
-        local prevCx = utf8.offset(line, -1, self.cx) or 1
-        local before = string.sub(line, 1, prevCx - 1)
-        local after  = string.sub(line, self.cx)
+        local line          = self.lines[self.cy]
+        local prevCx        = utf8.offset(line, -1, self.cx) or 1
+        local before        = string.sub(line, 1, prevCx - 1)
+        local after         = string.sub(line, self.cx)
         self.lines[self.cy] = before .. after
-        self.cx = prevCx
+        self.cx             = prevCx
     elseif self.cy > 1 then
         local rest = self.lines[self.cy]
         table.remove(self.lines, self.cy)
@@ -240,6 +264,7 @@ function tab:backspace()
         self.cx = #self.lines[self.cy] + 1
         self.lines[self.cy] = self.lines[self.cy] .. rest
     end
+
     self:checkErrors()
     self:saveHistory()
 end
@@ -247,13 +272,13 @@ end
 -- Splits the current line at the cursor and applies smart Lua auto-indentation
 function tab:newLine()
     self:deleteSelection()
-    local before = string.sub(self.lines[self.cy], 1, self.cx - 1)
-    local after  = string.sub(self.lines[self.cy], self.cx)
-    local indent = string.match(before, "^%s*") or ""
+    local before      = string.sub(self.lines[self.cy], 1, self.cx - 1)
+    local after       = string.sub(self.lines[self.cy], self.cx)
+    local indent      = string.match(before, "^%s*") or ""
     local cleanBefore = stripInlineComment(before)
 
     -- Increase indentation after block-opening Lua statements or opening braces
-    local opensBlock =
+    local opensBlock  =
         string.match(cleanBefore, "%f[%w_]then%s*$") or
         string.match(cleanBefore, "%f[%w_]do%s*$") or
         string.match(cleanBefore, "%f[%w_]else%s*$") or
@@ -284,19 +309,19 @@ function tab:indent()
         self.selEnd.x   = self.selEnd.x + INDENT_SIZE
         self.cx         = self.cx + INDENT_SIZE
     else
-        local before = string.sub(self.lines[self.cy], 1, self.cx - 1)
-        local after  = string.sub(self.lines[self.cy], self.cx)
+        local before        = string.sub(self.lines[self.cy], 1, self.cx - 1)
+        local after         = string.sub(self.lines[self.cy], self.cx)
         self.lines[self.cy] = before .. INDENT_STR .. after
-        self.cx = self.cx + INDENT_SIZE
+        self.cx             = self.cx + INDENT_SIZE
     end
 
     self:checkErrors()
     self:saveHistory()
 end
 
--- Unindents the selected lines or the current line by up to 4 leading spaces
+-- Unindents the selected lines or current line by one indentation level
 function tab:unindent()
-    local s, e = self:getSelectionRange()
+    local s, e      = self:getSelectionRange()
     local startLine = s and s.y or self.cy
     local endLine   = e and e.y or self.cy
 
@@ -332,7 +357,7 @@ end
 
 -- Writes the tab's lines to disk and marks the current history index as saved
 function tab:save(projectDir)
-    local path = self.filepath or (projectDir .. "/" .. self.name)
+    local path = self.filepath or ((projectDir or ".") .. "/" .. self.name)
     local file = io.open(path, "w")
     if file then
         file:write(table.concat(self.lines, "\n"))
@@ -467,3 +492,4 @@ function tab:selectAll()
 end
 
 return tab
+

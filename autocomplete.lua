@@ -72,12 +72,12 @@ function autocomplete.accept(tab)
 end
 
 -- Renders the autocomplete suggestion box anchored below the cursor
-function autocomplete.draw(font, tab)
+        function autocomplete.draw(font, tab, offsetX)
     if not autocomplete.isOpen() then return end
 
     local lineH  = font:getHeight() + 4
     local before = string.sub(tab.lines[tab.cy], 1, tab.cx - 1)
-    local boxX   = 60 + font:getWidth(before)
+  local boxX = (offsetX or 0) + 60 + font:getWidth(before)
     local boxY   = 45 + (tab.cy - tab.scrollY) * lineH
 
     -- Calculate box dimensions based on the longest suggestion

@@ -1,20 +1,34 @@
 -- Top tab bar for switching and closing open editor tabs
 local tabbar = {
-    height = 34,
+    height  = 34,
     scrollX = 0,
-    btnW = 24
+    btnW    = 24
 }
 
 local CLOSE_BTN_W = 22
 
 -- Returns the tab's display name with an asterisk if it has unsaved changes
 local function getTabLabel(tab)
-    return tab.name .. (tab:isModified() and " *" or "")
+    return tab.name .. (tab.isModified and tab:isModified() and " *" or "")
 end
 
 -- Calculates the total pixel width of a single tab button including padding and close button
 local function getTabWidth(font, tab)
-    return font:getWidth(getTabLabel(tab)) + 28 + CLOSE_BTN_W
+    -- Normalize parameter order if invoked as (tab, font)
+    if type(font) == "table" and type(tab) ~= "table" and font.name then
+        font, tab = tab, font
+    end
+
+    -- Retrieve font instance safely
+    local f = (type(font) == "userdata" and font) or (tabbar and tabbar.font) or love.graphics.getFont()
+    if not f then
+        f = love.graphics.newFont(12)
+        love.graphics.setFont(f)
+    end
+
+    local label = type(tab) == "table" and getTabLabel(tab) or tostring(tab or "")
+    local padding = 14 + CLOSE_BTN_W + 14
+    return f:getWidth(label) + padding
 end
 
 -- Calculates the total width of all open tabs combined
@@ -26,7 +40,7 @@ local function getTotalWidth(font, tabs)
     return total
 end
 
--- Calculates scroll layout info (whether arrows are needed, visible area, max scroll)
+-- Calculates scroll layout metrics (overflow detection, viewport width, maximum scroll offset)
 local function getScrollMetrics(font, tabs)
     local w = love.graphics.getWidth()
     local totalW = getTotalWidth(font, tabs)
@@ -38,7 +52,7 @@ local function getScrollMetrics(font, tabs)
     return w, needScroll, viewX, viewW, maxScroll
 end
 
--- Ensures the active tab is visible (optional: call when opening or switching tabs)
+-- Ensures the active tab is scrolled into view
 function tabbar.ensureVisible(font, tabs, activeIdx)
     local _, _, _, viewW, maxScroll = getScrollMetrics(font, tabs)
     local tabX = 0
@@ -78,7 +92,7 @@ function tabbar.draw(font, tabs, activeIdx)
     love.graphics.setColor(0.18, 0.20, 0.25)
     love.graphics.rectangle("fill", 0, h - 2, w, 2)
 
-    -- Clip tabs to the visible area
+    -- Clip tabs to visible viewport
     love.graphics.setScissor(viewX, 0, viewW, h)
     local x = viewX - tabbar.scrollX
     for i, tab in ipairs(tabs) do
@@ -86,7 +100,7 @@ function tabbar.draw(font, tabs, activeIdx)
         local tabW = getTabWidth(font, tab)
         local isActive = (i == activeIdx)
 
-        -- Tab background and active top accent
+        -- Tab background and active accent line
         if isActive then
             love.graphics.setColor(0.12, 0.14, 0.18)
             love.graphics.rectangle("fill", x, 0, tabW, h)
@@ -97,11 +111,11 @@ function tabbar.draw(font, tabs, activeIdx)
             love.graphics.rectangle("fill", x, 0, tabW, h - 2)
         end
 
-        -- Vertical separator
+        -- Tab divider
         love.graphics.setColor(0.18, 0.20, 0.25)
         love.graphics.rectangle("fill", x + tabW - 1, 0, 1, h)
 
-        -- Tab label color (red on syntax error, bright if active, muted otherwise)
+        -- Tab label color (red on syntax error, bright when active, muted otherwise)
         if tab.errorMsg then
             love.graphics.setColor(0.95, 0.35, 0.35)
         elseif isActive then
@@ -119,7 +133,7 @@ function tabbar.draw(font, tabs, activeIdx)
     end
     love.graphics.setScissor()
 
-    -- Draw "<" and ">" scroll buttons only when tabs overflow
+    -- Scroll buttons shown when tab bar overflows
     if needScroll then
         love.graphics.setColor(0.10, 0.11, 0.14)
         love.graphics.rectangle("fill", 0, 0, tabbar.btnW, h - 2)
@@ -139,8 +153,7 @@ function tabbar.draw(font, tabs, activeIdx)
     love.graphics.setColor(1, 1, 1)
 end
 
--- Returns the clicked tab index and whether the click hit its close button
--- Also handles clicks on the "<" and ">" scroll buttons automatically
+-- Returns the clicked tab index and whether the click targeted the close button
 function tabbar.getClickedIndex(mx, my, font, tabs)
     if my > tabbar.height then return nil, false end
 

@@ -1,3 +1,4 @@
+local utf8 = require("utf8")
 -- In-file text search bar and match navigator
 local search = {
     visible = false,
@@ -5,6 +6,14 @@ local search = {
     matches = {},
     currentIdx = 0
 }
+
+function search.backspace(tab)
+if #search.query > 0 then
+local lastChar = utf8.offset(search.query, -1)
+search.query = string.sub(search.query, 1, lastChar - 1)
+search.update(tab)
+end
+end
 
 -- Opens the search bar and refreshes matches if a query already exists
 function search.open(tab)
