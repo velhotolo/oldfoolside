@@ -431,6 +431,7 @@ end
 function love.keypressed(key)
     if Terminal and Terminal.keypressed and Terminal.keypressed(key) then return end
 
+
     -- Modal confirmation prompt for closing modified tabs
     if pendingCloseIdx then
         local idx = pendingCloseIdx
@@ -532,6 +533,17 @@ function love.keypressed(key)
         if runner and runner.run then
             local ok, msg = runner.run(tabs, ".")
             if abyss and abyss.set then abyss.set(msg, not ok) end
+        end
+        return
+    end
+    -- For Luau
+    if key == "f4" then
+        local tab = getActiveTab()
+        if tab and tab.toggleMode then
+            local novoModo = tab:toggleMode()
+            if abyss and abyss.set then
+                abyss.set("Modo de Linguagem alterado para: " .. novoModo:upper())
+            end
         end
         return
     end
@@ -899,4 +911,3 @@ function love.errorhandler(msg)
         love.graphics.present()
     end
 end
-
