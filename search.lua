@@ -1,141 +1,177 @@
 local utf8 = require("utf8")
--- In-file text search bar and match navigator
-local search = {
-    visible = false,
-    query = "",
-    matches = {},
-    currentIdx = 0
+
+local Search = {
+    visible    = false,
+    active     = false,
+    query      = "",
+    matches    = {},
+    matchIdx   = 1,
+    results    = {},
+    selected   = 1,
+    scroll     = 0,
+    lineHeight = 24,
+    maxVisible = 14
 }
 
-function search.backspace(tab)
-if #search.query > 0 then
-local lastChar = utf8.offset(search.query, -1)
-search.query = string.sub(search.query, 1, lastChar - 1)
-search.update(tab)
-end
-end
+-- Backward compatibility alias for main.lua
+Search.ativo = Search.active
 
--- Opens the search bar and refreshes matches if a query already exists
-function search.open(tab)
-    search.visible = true
-    if #search.query > 0 and tab then
-        search.update(tab)
-    end
-end
-
--- Hides the search bar
-function search.close()
-    search.visible = false
-end
-
--- Highlights the current match in the active tab and scrolls it into view
-local function jumpToCurrent(tab)
-    local match = search.matches[search.currentIdx]
-    if not match or not tab then return end
-
-    tab.selStart = { x = match.col, y = match.line }
-    tab.selEnd   = { x = match.col + match.len, y = match.line }
-    tab.cx       = match.col + match.len
-    tab.cy       = match.line
-    tab.scrollY  = math.max(0, match.line - 5)
-end
-
--- Performs a case-insensitive plain-text search across all lines of the active tab
-function search.update(tab)
-    search.matches = {}
-    search.currentIdx = 0
-
-    if #search.query == 0 or not tab then
-        if tab then
-            tab:clearSelection()
+local function truncateUTF8(str, maxChars)
+    if not str then return "" end
+    local count = 0
+    for p, _ in utf8.codes(str) do
+        count = count + 1
+        if count > maxChars then
+            return str:sub(1, p - 1) .. "..."
         end
-        return
     end
+    return str
+end
 
-    local lowerQuery = string.lower(search.query)
-    for lineIdx, line in ipairs(tab.lines) do
-        local lowerLine = string.lower(line)
-        local startPos = 1
+local function cleanUTF8(str)
+    if not str then return "" end
+    if pcall(utf8.len, str) then return str end
+
+    local parts = {}
+    local i = 1
+    local len = #str
+    while i <= len do
+        local nextPos = utf8.offset(str, 2, i)
+        if nextPos then
+            local char = str:sub(i, nextPos - 1)
+            if pcall(utf8.len, char) then table.insert(parts, char) end
+            i = nextPos
+        else
+            local rest = str:sub(i)
+            if pcall(utf8.len, rest) then table.insert(parts, rest) end
+            break
+        end
+    end
+    return table.concat(parts)
+end
+
+function Search.open(tab)
+    Search.visible  = true
+    Search.active   = true
+    Search.ativo    = true
+    Search.query    = ""
+    Search.matches  = {}
+    Search.matchIdx = 1
+
+    if tab and tab.hasSelection and tab:hasSelection() then
+        local txt = tab:getSelectedText()
+        if txt and not txt:find("\n") then
+            Search.query = txt
+            Search.updateTabMatches(tab)
+        end
+    end
+end
+
+function Search.close()
+    Search.visible = false
+    Search.active  = false
+    Search.ativo   = false
+end
+
+function Search.toggle(tab)
+    if Search.visible then Search.close() else Search.open(tab) end
+end
+
+function Search.updateTabMatches(tab)
+    Search.matches = {}
+    Search.matchIdx = 1
+    if not tab or not tab.lines or Search.query == "" then return end
+
+    local qLower = Search.query:lower()
+    for row, line in ipairs(tab.lines) do
+        local lLower = tostring(line or ""):lower()
+        local s = 1
         while true do
-            -- Plain-text search (ignores Lua pattern magic characters)
-            local s, e = string.find(lowerLine, lowerQuery, startPos, true)
-            if not s then break end
-            table.insert(search.matches, {
-                line = lineIdx,
-                col  = s,
-                len  = e - s + 1
-            })
-            startPos = e + 1
+            local startPos, endPos = string.find(lLower, qLower, s, true)
+            if not startPos then break end
+            table.insert(Search.matches, { row = row, col = startPos, len = (endPos - startPos + 1) })
+            s = endPos + 1
         end
     end
 
-    if #search.matches > 0 then
-        search.currentIdx = 1
-        jumpToCurrent(tab)
-    else
-        tab:clearSelection()
+    if #Search.matches > 0 then
+        Search.jumpToCurrentMatch(tab)
     end
 end
 
--- Appends typed characters to the search query and refreshes results
-function search.textinput(t, tab)
-    search.query = search.query .. t
-    search.update(tab)
-end
-
--- Removes the last character from the search query and refreshes results
-function search.backspace(tab)
-    if #search.query > 0 then
-        search.query = string.sub(search.query, 1, -2)
-        search.update(tab)
+function Search.jumpToCurrentMatch(tab)
+    if not tab or #Search.matches == 0 then return end
+    local m = Search.matches[Search.matchIdx]
+    if m then
+        tab.cy = m.row
+        tab.cx = m.col
+        tab.selStart = { x = m.col, y = m.row }
+        tab.selEnd = { x = m.col + m.len, y = m.row }
     end
 end
 
--- Jumps to the next search match, wrapping around to the first
-function search.next(tab)
-    if #search.matches == 0 then return end
-    search.currentIdx = (search.currentIdx % #search.matches) + 1
-    jumpToCurrent(tab)
+function Search.next(tab)
+    if #Search.matches == 0 then return end
+    Search.matchIdx = (Search.matchIdx % #Search.matches) + 1
+    Search.jumpToCurrentMatch(tab)
 end
 
--- Jumps to the previous search match, wrapping around to the last
-function search.prev(tab)
-    if #search.matches == 0 then return end
-    search.currentIdx = ((search.currentIdx - 2) % #search.matches) + 1
-    jumpToCurrent(tab)
+function Search.prev(tab)
+    if #Search.matches == 0 then return end
+    Search.matchIdx = Search.matchIdx - 1
+    if Search.matchIdx < 1 then Search.matchIdx = #Search.matches end
+    Search.jumpToCurrentMatch(tab)
 end
 
--- Renders the floating search bar and match counter in the top-right corner
-function search.draw(font)
-    if not search.visible then return end
+function Search.textinput(t, tab)
+    if not Search.visible then return end
+    Search.query = Search.query .. tostring(t or "")
+    Search.updateTabMatches(tab)
+end
+
+function Search.backspace(tab)
+    if not Search.visible then return end
+    local offset = utf8.offset(Search.query, -1)
+    if offset then
+        Search.query = string.sub(Search.query, 1, offset - 1)
+        Search.updateTabMatches(tab)
+    end
+end
+
+function Search.draw(font)
+    if not Search.visible then return end
 
     local w = love.graphics.getWidth()
-    local boxW = 340
-    local boxH = 38
-    local x = w - boxW - 15
-    local y = 42 -- Positioned right below the tab bar
+    local boxW = math.min(500, w - 40)
+    local boxH = 36
+    local boxX = w - boxW - 20
+    local boxY = 46
 
-    -- Background and border
-    love.graphics.setColor(0.11, 0.12, 0.16, 0.96)
-    love.graphics.rectangle("fill", x, y, boxW, boxH, 5, 5)
-    love.graphics.setColor(0.20, 0.80, 0.40)
-    love.graphics.rectangle("line", x, y, boxW, boxH, 5, 5)
+    love.graphics.setColor(0.12, 0.14, 0.18, 0.96)
+    love.graphics.rectangle("fill", boxX, boxY, boxW, boxH, 6, 6)
+    love.graphics.setColor(0.35, 0.55, 0.85)
+    love.graphics.setLineWidth(1.5)
+    love.graphics.rectangle("line", boxX, boxY, boxW, boxH, 6, 6)
+    love.graphics.setLineWidth(1)
 
-    -- Label and query text
-    love.graphics.setColor(0.60, 0.65, 0.72)
-    love.graphics.print("Find:", x + 10, y + 8)
+    love.graphics.setColor(0.60, 0.80, 1.0)
+    love.graphics.print("Find:", boxX + 12, boxY + 8)
 
-    love.graphics.setColor(0.95, 0.95, 0.98)
-    love.graphics.print(search.query, x + 65, y + 8)
+    local cursor = (math.floor(love.timer.getTime() * 2) % 2 == 0) and "|" or ""
+    local safeText = truncateUTF8(cleanUTF8(Search.query), 30)
 
-    -- Match counter
-    local countText = search.currentIdx .. "/" .. #search.matches
-    if #search.query > 0 and #search.matches == 0 then
-        love.graphics.setColor(0.95, 0.35, 0.35)
-    else
-        love.graphics.setColor(0.45, 0.85, 0.50)
-    end
-    love.graphics.print(countText, x + boxW - font:getWidth(countText) - 12, y + 8)
+    love.graphics.setColor(1, 1, 1)
+    pcall(function()
+        love.graphics.print(safeText .. cursor, boxX + 60, boxY + 8)
+    end)
+
+    local countText = (#Search.matches > 0)
+        and string.format("%d / %d", Search.matchIdx, #Search.matches)
+        or (Search.query ~= "" and "0/0" or "")
+
+    love.graphics.setColor(0.70, 0.75, 0.85)
+    love.graphics.printf(countText, boxX, boxY + 8, boxW - 14, "right")
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
-return search
+return Search
