@@ -12,6 +12,10 @@ I'm currently coding all my projects in it, and so far, so good. I just need to 
 
 ---
 
+## Log
+- Decided to add this section because this thing became bigger than what I expected. There are some limitations as of now, such as file opening (you can always drag and drop, but some people don't like drag and drop). It had some issues about how it managed open tabs while closing the application, caractere slicing while searching, etc.
+- So I adressed most of this stuff, except for the file opening (you still have to drag and drop if you're not in linux), search became worse (my bad), it doesn't jump to the searched term; I'll have a look at it. I added support for Luau for the RObloxers out there; you just need to press F4 to switch modes (you can see the mode on the abyss at the bottom of the screen). This time I have releases for the 3 major OS... and that's it. I'll keep improving it, yay!
+
 ## Features
 
 - **Multi-Tab Editing & Split-Screen (`F2`):** Work across multiple Lua files, rename tabs inline, drag-and-drop files onto the window, or split the viewport into two independent panes.
@@ -50,7 +54,7 @@ Roadmap
     
     [ ] Documentation
          
-    [ ] Expand macro expansion directly from autocomplete (dictionary.lua macros)
+    [x] Expand macro expansion directly from autocomplete (dictionary.lua macros)
 
     [ ] Cross-platform file dialog & runner support (Windows/macOS)
 
