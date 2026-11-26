@@ -52,7 +52,7 @@ Roadmap
     
     [X] Autosave
     
-    [ ] Documentation
+    [x] Documentation
          
     [x] Expand macro expansion directly from autocomplete (dictionary.lua macros)
 
