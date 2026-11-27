@@ -1,4 +1,6 @@
--- Top tab bar for switching and closing open editor tabs
+-- =========================================================================
+-- TABBAR.LUA — Top Tab Bar & Navigation Orchestrator
+-- =========================================================================
 local tabbar = {
     height  = 34,
     scrollX = 0,
@@ -7,40 +9,38 @@ local tabbar = {
 
 local CLOSE_BTN_W = 22
 
--- Returns the tab's display name with an asterisk if it has unsaved changes
 local function getTabLabel(tab)
-    return tab.name .. (tab.isModified and tab:isModified() and " *" or "")
+    if not tab then return "untitled" end
+    local name = tostring(tab.name or "untitled")
+    local modified = (tab.isModified and tab:isModified()) and " *" or ""
+    return name .. modified
 end
 
--- Calculates the total pixel width of a single tab button including padding and close button
 local function getTabWidth(font, tab)
-    -- Normalize parameter order if invoked as (tab, font)
     if type(font) == "table" and type(tab) ~= "table" and font.name then
         font, tab = tab, font
     end
 
-    -- Retrieve font instance safely
-    local f = (type(font) == "userdata" and font) or (tabbar and tabbar.font) or love.graphics.getFont()
+    local f = (type(font) == "userdata" and font) or love.graphics.getFont()
     if not f then
         f = love.graphics.newFont(12)
         love.graphics.setFont(f)
     end
 
-    local label = type(tab) == "table" and getTabLabel(tab) or tostring(tab or "")
+    local label = getTabLabel(tab)
     local padding = 14 + CLOSE_BTN_W + 14
     return f:getWidth(label) + padding
 end
 
--- Calculates the total width of all open tabs combined
 local function getTotalWidth(font, tabs)
     local total = 0
+    if not tabs or type(tabs) ~= "table" then return 0 end
     for _, tab in ipairs(tabs) do
         total = total + getTabWidth(font, tab)
     end
     return total
 end
 
--- Calculates scroll layout metrics (overflow detection, viewport width, maximum scroll offset)
 local function getScrollMetrics(font, tabs)
     local w = love.graphics.getWidth()
     local totalW = getTotalWidth(font, tabs)
@@ -52,14 +52,16 @@ local function getScrollMetrics(font, tabs)
     return w, needScroll, viewX, viewW, maxScroll
 end
 
--- Ensures the active tab is scrolled into view
 function tabbar.ensureVisible(font, tabs, activeIdx)
+    if not tabs or #tabs == 0 then return end
+    activeIdx = math.max(1, math.min(activeIdx or 1, #tabs))
+
     local _, _, _, viewW, maxScroll = getScrollMetrics(font, tabs)
     local tabX = 0
     for i = 1, activeIdx - 1 do
         tabX = tabX + getTabWidth(font, tabs[i])
     end
-    local tabW = tabs[activeIdx] and getTabWidth(font, tabs[activeIdx]) or 0
+    local tabW = getTabWidth(font, tabs[activeIdx])
 
     if tabX < tabbar.scrollX then
         tabbar.scrollX = tabX
@@ -69,7 +71,6 @@ function tabbar.ensureVisible(font, tabs, activeIdx)
     tabbar.scrollX = math.max(0, math.min(tabbar.scrollX, maxScroll))
 end
 
--- Scrolls the tab bar horizontally when using the mouse wheel over it
 function tabbar.wheelmoved(dx, dy, font, tabs)
     local _, my = love.mouse.getPosition()
     if my > tabbar.height then return false end
@@ -80,42 +81,37 @@ function tabbar.wheelmoved(dx, dy, font, tabs)
     return true
 end
 
--- Renders the top tab bar with active highlight, error indicators, close buttons, and scroll arrows
 function tabbar.draw(font, tabs, activeIdx)
     local h = tabbar.height
     local w, needScroll, viewX, viewW, maxScroll = getScrollMetrics(font, tabs)
 
-    -- Bar background and bottom border
-    love.graphics.setColor(0.05, 0.05, 0.07)
+    -- Base bar background
+    love.graphics.setColor(0.06, 0.07, 0.09)
     love.graphics.rectangle("fill", 0, 0, w, h)
-
-    love.graphics.setColor(0.18, 0.20, 0.25)
+    love.graphics.setColor(0.16, 0.18, 0.23)
     love.graphics.rectangle("fill", 0, h - 2, w, 2)
 
-    -- Clip tabs to visible viewport
     love.graphics.setScissor(viewX, 0, viewW, h)
     local x = viewX - tabbar.scrollX
+
     for i, tab in ipairs(tabs) do
         local label = getTabLabel(tab)
         local tabW = getTabWidth(font, tab)
         local isActive = (i == activeIdx)
 
-        -- Tab background and active accent line
         if isActive then
             love.graphics.setColor(0.12, 0.14, 0.18)
             love.graphics.rectangle("fill", x, 0, tabW, h)
             love.graphics.setColor(0.20, 0.80, 0.40)
             love.graphics.rectangle("fill", x, 0, tabW, 3)
         else
-            love.graphics.setColor(0.07, 0.08, 0.10)
+            love.graphics.setColor(0.08, 0.09, 0.11)
             love.graphics.rectangle("fill", x, 0, tabW, h - 2)
         end
 
-        -- Tab divider
-        love.graphics.setColor(0.18, 0.20, 0.25)
+        love.graphics.setColor(0.16, 0.18, 0.23)
         love.graphics.rectangle("fill", x + tabW - 1, 0, 1, h)
 
-        -- Tab label color (red on syntax error, bright when active, muted otherwise)
         if tab.errorMsg then
             love.graphics.setColor(0.95, 0.35, 0.35)
         elseif isActive then
@@ -125,7 +121,7 @@ function tabbar.draw(font, tabs, activeIdx)
         end
         love.graphics.print(label, x + 14, 7)
 
-        -- Close button ("x")
+        -- Close button
         love.graphics.setColor(0.55, 0.58, 0.65)
         love.graphics.print("x", x + tabW - CLOSE_BTN_W + 4, 6)
 
@@ -133,13 +129,12 @@ function tabbar.draw(font, tabs, activeIdx)
     end
     love.graphics.setScissor()
 
-    -- Scroll buttons shown when tab bar overflows
     if needScroll then
         love.graphics.setColor(0.10, 0.11, 0.14)
         love.graphics.rectangle("fill", 0, 0, tabbar.btnW, h - 2)
         love.graphics.rectangle("fill", w - tabbar.btnW, 0, tabbar.btnW, h - 2)
 
-        love.graphics.setColor(0.18, 0.20, 0.25)
+        love.graphics.setColor(0.16, 0.18, 0.23)
         love.graphics.rectangle("fill", tabbar.btnW - 1, 0, 1, h)
         love.graphics.rectangle("fill", w - tabbar.btnW, 0, 1, h)
 
@@ -150,10 +145,9 @@ function tabbar.draw(font, tabs, activeIdx)
         love.graphics.printf(">", w - tabbar.btnW, 7, tabbar.btnW, "center")
     end
 
-    love.graphics.setColor(1, 1, 1)
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Returns the clicked tab index and whether the click targeted the close button
 function tabbar.getClickedIndex(mx, my, font, tabs)
     if my > tabbar.height then return nil, false end
 
@@ -173,7 +167,8 @@ function tabbar.getClickedIndex(mx, my, font, tabs)
     for i, tab in ipairs(tabs) do
         local tabW = getTabWidth(font, tab)
         if mx >= x and mx <= x + tabW then
-            local clickedClose = mx >= (x + tabW - CLOSE_BTN_W - 4)
+            local closeHitboxX = x + tabW - CLOSE_BTN_W - 6
+            local clickedClose = mx >= closeHitboxX
             return i, clickedClose
         end
         x = x + tabW
@@ -182,4 +177,3 @@ function tabbar.getClickedIndex(mx, my, font, tabs)
 end
 
 return tabbar
-

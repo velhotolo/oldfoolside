@@ -55,7 +55,6 @@ local function sanitizeTab(tab)
     tab.scrollY = math.max(0, tab.scrollY or 0)
 end
 
--- Loads DejaVu Sans Mono for Powerline with safe fallback cascade
 local function loadCodeFont(size)
     size = size or 16
     local candidatePaths = {
@@ -144,12 +143,10 @@ local function ensureCursorVisible(tab)
     local visibleLines = math.max(1, math.floor((winH - topY - bottomBarH) / lineH))
 
     if (tab.cy - 1) < tab.scrollY then
-        tab.scrollY = tab.cy - 1
+        tab.scrollY = math.max(0, tab.cy - 1)
     elseif tab.cy > tab.scrollY + visibleLines then
-        tab.scrollY = tab.cy - visibleLines
+        tab.scrollY = math.max(0, tab.cy - visibleLines)
     end
-
-    tab.scrollY = math.max(0, tab.scrollY or 0)
 end
 
 local function splitLines(content)
@@ -336,6 +333,13 @@ function love.mousepressed(mx, my, button)
     local activeTab = getActiveTab()
     if not activeTab then return end
 
+    -- ROTA DE CLIQUE DO SEARCH (Next, Previous, Close)
+    if search and (search.visible or search.ativo) and search.mousepressed then
+        if search.mousepressed(mx, my, button, activeTab) then
+            return
+        end
+    end
+
     if activeTab.renaming and activeTab.cancelRename then
         activeTab:cancelRename()
         if abyss and abyss.set then abyss.set("Rename cancelled") end
@@ -431,8 +435,6 @@ end
 function love.keypressed(key)
     if Terminal and Terminal.keypressed and Terminal.keypressed(key) then return end
 
-
-    -- Modal confirmation prompt for closing modified tabs
     if pendingCloseIdx then
         local idx = pendingCloseIdx
         local targetTab = tabs[idx]
@@ -463,7 +465,6 @@ function love.keypressed(key)
     if not tab then return end
     sanitizeTab(tab)
 
-    -- Tab renaming mode input handling
     if tab.renaming then
         if key == "return" or key == "kpenter" then
             if tab.confirmRename and tab:confirmRename() then
@@ -481,15 +482,11 @@ function love.keypressed(key)
         return
     end
 
-    -- Help overlay input handling
     if help and help.visible then
-        if key == "escape" or key == "f1" then
-            help.toggle()
-        end
+        if key == "escape" or key == "f1" then help.toggle() end
         return
     end
 
-    -- Search bar input handling
     if search and (search.visible or search.ativo) then
         local shift = love.keyboard.isDown("lshift", "rshift")
         if key == "escape" then
@@ -506,7 +503,6 @@ function love.keypressed(key)
         return
     end
 
-    -- Function keys (F1 - F5)
     if key == "f1" then
         if help and help.toggle then help.toggle() end
         return
@@ -536,11 +532,11 @@ function love.keypressed(key)
         end
         return
     end
-    -- For Luau
+
     if key == "f4" then
-        local tab = getActiveTab()
-        if tab and tab.toggleMode then
-            local novoModo = tab:toggleMode()
+        local activeT = getActiveTab()
+        if activeT and activeT.toggleMode then
+            local novoModo = activeT:toggleMode()
             if abyss and abyss.set then
                 abyss.set("Modo de Linguagem alterado para: " .. novoModo:upper())
             end
@@ -548,7 +544,6 @@ function love.keypressed(key)
         return
     end
 
-    -- Autocomplete navigation
     if autocomplete and autocomplete.isOpen and autocomplete.isOpen() then
         if key == "down" then
             autocomplete.move(1)
@@ -573,7 +568,6 @@ function love.keypressed(key)
         return
     end
 
-    -- Tab key: Indentation, dedentation, and macro expansion
     if key == "tab" then
         local hasSel = tab.hasSelection and tab:hasSelection()
         if not shift and not hasSel then
@@ -611,7 +605,6 @@ function love.keypressed(key)
         return
     end
 
-    -- Control shortcuts
     if ctrl then
         if key == "s" then
             local ok, path = tab:save()
@@ -695,7 +688,6 @@ function love.keypressed(key)
         return
     end
 
-    -- Text editing keys
     if key == "backspace" then
         if tab.backspace then tab:backspace() end
         sanitizeTab(tab)
@@ -757,7 +749,7 @@ function love.keypressed(key)
 end
 
 -- -------------------------------------------------------------------------
--- DEFENSIVE PANE RENDERING
+-- DEFENSIVE PANE RENDERING (THEMED & HIGH-CONTRAST)
 -- -------------------------------------------------------------------------
 
 local function drawPane(tab, offsetX, paneW, isFocused)
@@ -777,14 +769,31 @@ local function drawPane(tab, offsetX, paneW, isFocused)
 
     love.graphics.setScissor(offsetX, barH, paneW, h - barH - 34)
 
+    -- Editor background & gutter separation
+    love.graphics.setColor(0.12, 0.13, 0.17)
+    love.graphics.rectangle("fill", offsetX, barH, paneW, h - barH - 34)
+
+    love.graphics.setColor(0.10, 0.11, 0.14)
+    love.graphics.rectangle("fill", offsetX, barH, 50, h - barH - 34)
+
+    love.graphics.setColor(0.18, 0.20, 0.26)
+    love.graphics.line(offsetX + 50, barH, offsetX + 50, h - 34)
+
     for i, line in ipairs(tab.lines) do
         line = tostring(line or "")
         local y = topY + (i - 1 - (tab.scrollY or 0)) * lineH
 
         if y + lineH >= barH and y <= h - 34 then
+            -- Error indicator
             if tab.errorLine == i then
-                love.graphics.setColor(0.55, 0.12, 0.12, 0.35)
+                love.graphics.setColor(0.70, 0.15, 0.20, 0.35)
                 love.graphics.rectangle("fill", offsetX, y, paneW, lineH)
+            end
+
+            -- Current active line subtle highlight
+            if isFocused and tab.cy == i then
+                love.graphics.setColor(0.18, 0.20, 0.26, 0.4)
+                love.graphics.rectangle("fill", offsetX + 50, y, paneW - 50, lineH)
             end
 
             -- Selection highlight
@@ -794,26 +803,49 @@ local function drawPane(tab, offsetX, paneW, isFocused)
                 local x1 = offsetX + 60 + safeWidth(codeFont, safeSub(line, 1, c1 - 1))
                 local x2 = offsetX + 60 + safeWidth(codeFont, safeSub(line, 1, c2 - 1))
 
-                love.graphics.setColor(0.20, 0.45, 0.70, 0.55)
-                love.graphics.rectangle("fill", x1, y, math.max(8, x2 - x1), lineH)
+                love.graphics.setColor(0.25, 0.40, 0.70, 0.50)
+                love.graphics.rectangle("fill", x1, y, math.max(6, x2 - x1), lineH)
             end
 
-            -- Line number
-            love.graphics.setColor(0.3, 0.3, 0.35)
-            love.graphics.print(tostring(i), offsetX + 10, y)
+            -- SEARCH OCCURRENCE HIGHLIGHTS
+            if search and (search.visible or search.ativo) and search.matches then
+                for idx, m in ipairs(search.matches) do
+                    if m.row == i then
+                        local xMatch = offsetX + 60 + safeWidth(codeFont, safeSub(line, 1, m.col - 1))
+                        local wMatch = safeWidth(codeFont, safeSub(line, m.col, m.col + m.len - 1))
+                        if idx == search.matchIdx then
+                            -- Active match (Bright Amber)
+                            love.graphics.setColor(0.95, 0.70, 0.15, 0.85)
+                            love.graphics.rectangle("fill", xMatch, y, wMatch, lineH, 2, 2)
+                        else
+                            -- Other matches (Soft Yellow outline)
+                            love.graphics.setColor(0.75, 0.65, 0.20, 0.35)
+                            love.graphics.rectangle("fill", xMatch, y, wMatch, lineH, 2, 2)
+                        end
+                    end
+                end
+            end
+
+            -- Line numbers
+            if tab.cy == i then
+                love.graphics.setColor(0.85, 0.88, 0.95)
+            else
+                love.graphics.setColor(0.35, 0.38, 0.48)
+            end
+            love.graphics.printf(tostring(i), offsetX + 4, y, 40, "right")
 
             -- Syntax-highlighted text
             love.graphics.setColor(1, 1, 1)
-            local hl = line
+            local coloredText = line
             if syntax and syntax.highlightSyntax then
                 local ok, res = pcall(syntax.highlightSyntax, line)
-                if ok and res then hl = res end
+                if ok and res then coloredText = res end
             end
-            love.graphics.print(hl, offsetX + 60, y)
+            love.graphics.print(coloredText, offsetX + 60, y)
         end
     end
 
-    -- Defensive cursor rendering
+    -- Cursor rendering (Neon Cyan)
     if isFocused and math.floor(love.timer.getTime() * 2) % 2 == 0 then
         local line = tab.lines[tab.cy] or ""
         local cx = tab.cx or 1
@@ -822,7 +854,7 @@ local function drawPane(tab, offsetX, paneW, isFocused)
         local scrollY = tab.scrollY or 0
         local cursorY = topY + (cy - 1 - scrollY) * lineH
 
-        love.graphics.setColor(0.95, 0.95, 0.95)
+        love.graphics.setColor(0.30, 0.85, 1.0, 1.0)
         love.graphics.rectangle("fill", offsetX + 60 + safeWidth(codeFont, before), cursorY, 2, lineH - 2)
     end
 
@@ -836,7 +868,7 @@ function love.draw()
         local activeTab = getActiveTab()
         local barH = (tabbar and tabbar.height) or 32
 
-        love.graphics.clear(0.08, 0.09, 0.11)
+        love.graphics.clear(0.09, 0.10, 0.13)
 
         if splitScreen then
             local halfW = math.floor(w / 2)
@@ -870,7 +902,7 @@ function love.draw()
 end
 
 -- -------------------------------------------------------------------------
--- GLOBAL ERROR HANDLER (CRASH SHIELD / BLUE SCREEN REPLACEMENT)
+-- GLOBAL ERROR HANDLER
 -- -------------------------------------------------------------------------
 
 function love.errorhandler(msg)
@@ -898,7 +930,7 @@ function love.errorhandler(msg)
         love.graphics.setScissor()
         love.graphics.clear(0.10, 0.11, 0.14)
 
-        love.graphics.setColor(0.9, 0.25, 0.25)
+        love.graphics.setColor(0.95, 0.35, 0.35)
         love.graphics.printf("CRITICAL ERROR RECOVERY", 30, 30, w - 60, "left")
 
         love.graphics.setColor(0.85, 0.85, 0.85)

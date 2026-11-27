@@ -1,114 +1,130 @@
--- Integrated command-line terminal overlay toggled with F3
+-- =========================================================================
+-- TERMINAL.LUA — Integrated Command Shell Overlay
+-- =========================================================================
+local utf8 = require("utf8")
+
 local Terminal = {
-    aberto = false,
+    isOpen = false,
     input = "",
-    historico = { "Old Fool's Terminal — Digite um comando (ex: touch bestiario.lua) | [F3] Fechar" },
-    maxLinhas = 12,
+    history = { "Old Fool's Terminal — Type a command (e.g. ls -la) | [F3] Close" },
+    maxLines = 12,
 }
 
--- Splits output text by newlines and appends it to the terminal history buffer
-local function addLinha(texto)
-    for linha in (texto .. "\n"):gmatch("(.-)\n") do
-        table.insert(Terminal.historico, linha)
+-- Main.lua backward compatibility aliases
+Terminal.aberto = Terminal.isOpen
+Terminal.historico = Terminal.history
+Terminal.maxLinhas = Terminal.maxLines
+
+-- Splits text by newline and pushes lines into the circular history buffer
+local function addLine(text)
+    text = tostring(text or "")
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        table.insert(Terminal.history, line)
     end
-    while #Terminal.historico > Terminal.maxLinhas do
-        table.remove(Terminal.historico, 1)
+    while #Terminal.history > Terminal.maxLines do
+        table.remove(Terminal.history, 1)
     end
 end
 
--- Toggles the terminal overlay open or closed
+-- Toggles terminal overlay visibility
 function Terminal.toggle()
-    Terminal.aberto = not Terminal.aberto
+    Terminal.isOpen = not Terminal.isOpen
+    Terminal.aberto = Terminal.isOpen
 end
 
--- Executes a shell command, captures stdout/stderr, and prints the result to the terminal
-function Terminal.executar(cmd)
-    cmd = cmd:match("^%s*(.-)%s*$") -- Trim leading and trailing whitespace
+-- Executes shell commands defensively with captured output
+function Terminal.execute(cmd)
+    cmd = tostring(cmd or ""):match("^%s*(.-)%s*$")
     if cmd == "" then return end
 
-    addLinha("> " .. cmd)
+    addLine("> " .. cmd)
 
     if cmd == "clear" or cmd == "cls" then
-        Terminal.historico = {}
+        Terminal.history = {}
         return
     end
 
-    -- Run command in the system shell and capture both stdout and stderr (2>&1)
-    local handle = io.popen(cmd .. " 2>&1")
-    if handle then
-        local saida = handle:read("*a")
+    -- Run command and capture both stdout and stderr
+    local ok, handle = pcall(io.popen, cmd .. " 2>&1")
+    if ok and handle then
+        local output = handle:read("*a")
         handle:close()
-        if saida and saida ~= "" then
-            addLinha(saida:gsub("%s+$", ""))
+        if output and output ~= "" then
+            addLine(output:gsub("%s+$", ""))
         else
-            addLinha("[OK]")
+            addLine("[OK]")
         end
     else
-        addLinha("[ERRO ao executar comando]")
+        addLine("[ERROR: Command execution failed]")
     end
 end
 
--- Handles terminal key events; returns true when the key is consumed so the editor ignores it
+Terminal.executar = Terminal.execute
+
+-- Handles keyboard input safely
 function Terminal.keypressed(key)
     if key == "f3" then
         Terminal.toggle()
         return true
     end
-    if not Terminal.aberto then return false end
+    if not Terminal.isOpen then return false end
 
     if key == "escape" then
+        Terminal.isOpen = false
         Terminal.aberto = false
     elseif key == "return" or key == "kpenter" then
-        Terminal.executar(Terminal.input)
+        Terminal.execute(Terminal.input)
         Terminal.input = ""
     elseif key == "backspace" then
-        -- Remove the last UTF-8 character from the input line
-        local byteoffset = #Terminal.input
-        while byteoffset > 0 do
-            local b = string.byte(Terminal.input, byteoffset)
-            byteoffset = byteoffset - 1
-            if b < 128 or b >= 192 then break end
+        local offset = utf8.offset(Terminal.input, -1)
+        if offset then
+            Terminal.input = string.sub(Terminal.input, 1, offset - 1)
+        else
+            Terminal.input = ""
         end
-        Terminal.input = string.sub(Terminal.input, 1, byteoffset)
     end
     return true
 end
 
--- Appends typed characters to the terminal input buffer when the terminal is open
+-- Captures character typing when terminal overlay is active
 function Terminal.textinput(t)
-    if not Terminal.aberto then return false end
-    Terminal.input = Terminal.input .. t
+    if not Terminal.isOpen then return false end
+    Terminal.input = Terminal.input .. tostring(t or "")
     return true
 end
 
--- Renders the terminal overlay, command history, and blinking prompt at the bottom of the screen
+-- Renders the terminal panel and command prompt
 function Terminal.draw()
-    if not Terminal.aberto then return end
+    if not Terminal.isOpen then return end
 
     local w, h = love.graphics.getDimensions()
-    local tw, th = math.min(720, w - 40), 270
-    local tx, ty = (w - tw) / 2, h - th - 20
+    local tw, th = math.min(740, w - 40), 270
+    local tx, ty = math.floor((w - tw) / 2), h - th - 24
 
-    -- Background and border (drawn on top of the editor)
-    love.graphics.setColor(0.05, 0.06, 0.09, 0.96)
+    -- Background and perimeter frame
+    love.graphics.setColor(0.06, 0.07, 0.10, 0.97)
     love.graphics.rectangle("fill", tx, ty, tw, th, 8, 8)
-    love.graphics.setColor(0.35, 0.90, 0.50)
+    love.graphics.setColor(0.20, 0.80, 0.45, 0.9)
+    love.graphics.setLineWidth(1.5)
     love.graphics.rectangle("line", tx, ty, tw, th, 8, 8)
+    love.graphics.setLineWidth(1)
 
-    -- Title bar
-    love.graphics.setColor(0.35, 0.90, 0.50)
-    love.graphics.print("TERMINAL [F3 para ocultar | 'clear' para limpar]", tx + 14, ty + 10)
+    -- Header bar
+    love.graphics.setColor(0.20, 0.80, 0.45)
+    love.graphics.print("TERMINAL [F3 to hide | 'clear' to wipe history]", tx + 14, ty + 10)
 
-    -- Output history
-    love.graphics.setColor(0.85, 0.90, 0.85)
-    for i, linha in ipairs(Terminal.historico) do
-        love.graphics.print(linha, tx + 14, ty + 32 + (i - 1) * 16)
+    -- Command output stream
+    love.graphics.setColor(0.82, 0.88, 0.85)
+    for i, line in ipairs(Terminal.history) do
+        love.graphics.print(line, tx + 14, ty + 32 + (i - 1) * 16)
     end
 
-    -- Active command prompt with blinking cursor
+    -- Prompt line with blinking cursor
     local cursor = (math.floor(love.timer.getTime() * 2) % 2 == 0) and "_" or ""
-    love.graphics.setColor(1, 0.90, 0.35)
-    love.graphics.print("$ " .. Terminal.input .. cursor, tx + 14, ty + th - 28)
+    love.graphics.setColor(1.0, 0.85, 0.35)
+    love.graphics.print("$ " .. Terminal.input .. cursor, tx + 14, ty + th - 26)
+
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 return Terminal
